@@ -1,7 +1,6 @@
-# MemoryOS Rust 移植版 - 実装可能設計仕様書（v4.2 Final Complete）
+# MemoryOS Rust 移植版 - 設計仕様書
 
-**バージョン**: 4.2.0  
-**日付**: 2025 年 1 月  
+**日付**: 2026 年 4 月  
 **ライセンス**: Apache-2.0  
 
 ---
@@ -83,7 +82,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        MemoryOS (Rust v4.2)                     │
+│                        MemoryOS (Rust)                          │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐      │
@@ -103,7 +102,6 @@ chrono = { version = "0.4", features = ["serde"] }
 └─────────────────────────────────────────────────────────────┘
 
 【ストレージ層設計】
-❌ tantivy を削除（過剰設計）
 ✅ HNSW-rs 単体でベクトル検索
 ✅ SQLite が唯一の ID ソース（AUTOINCREMENT）
 ```
@@ -226,7 +224,7 @@ memoryos-rs/
 │   │
 │   └── api/                      # API サーバー（オプション）
 │       ├── mod.rs                # 公開インターフェース
-│       └── server.rs             # REST/MCPサーバー（axum/tower）
+│       └── server.rs             # REST/MCP サーバー（axum/tower）
 │
 ├── examples/                     # デモコード
 │   ├── simple_demo.rs            # basic_usage.py の移植
@@ -371,14 +369,14 @@ impl MemoryRecord {
         self.layer_str.parse()
     }
     
-    /// v4.2: created_at を DateTime に変換した getter（束縛修正）
+    /// created_at を DateTime に変換した getter
     pub fn created_at(&self) -> Result<DateTime<Utc>> {
         let created_at = chrono::NaiveDateTime::parse_from_str(
             &self.created_at_str, "%Y-%m-%d %H:%M:%S"
         ).map_err(|e| MemoryOsError::StorageError(format!("Date parse error: {}", e)))?
             .and_utc();
         
-        Ok(created_at)  // ← v4.2: 変数を束縛してから返す
+        Ok(created_at)
     }
     
     /// metadata JSON を Value に変換した getter
@@ -495,10 +493,10 @@ impl MemoryOsConfig {
 
 ## 5. ストレージ層設計
 
-### 5.1 SQLite スキーマ（v4.2）
+### 5.1 SQLite スキーマ
 
 ```sql
--- memoryos_schema.sql (v4.2 Final Complete)
+-- memoryos_schema.sql
 
 -- バージョン管理テーブル
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -665,7 +663,7 @@ impl MetadataStore {
         Ok(id)
     }
     
-    /// v4.1 Final: QueryBuilder で安全な可変長 IN クエリ（順序保証付き）
+    /// QueryBuilder で安全な可変長 IN クエリ（順序保証付き）
     pub async fn get_records_by_ids_ordered(
         &self,
         record_ids: &[u64],
@@ -713,7 +711,7 @@ impl MetadataStore {
         // ID リスト取得（rerank 順）
         let record_ids: Vec<_> = candidates.iter().map(|c| c.record_id).collect();
         
-        // 順序保証付きでレコード取得（v4.1 QueryBuilder 版）
+        // 順序保証付きでレコード取得
         let records = self.get_records_by_ids_ordered(&record_ids).await?;
         
         // 類似度スコアを付与（candidates の rerank 順）
@@ -733,7 +731,7 @@ impl MetadataStore {
         Ok(results)
     }
     
-    /// v4.2: 全レコードの embedding と metadata を取得（再構築用、完全復元）
+    /// 全レコードの embedding と metadata を取得（再構築用、完全復元）
     pub async fn get_all_embeddings(&self, dimensions: usize) -> Result<Vec<EmbeddingRecord>> {
         let rows = sqlx::query(
             r#"SELECT 
@@ -777,11 +775,11 @@ impl MetadataStore {
             ).map_err(|e| MemoryOsError::StorageError(format!("Date parse error: {}", e)))?
                 .and_utc();
             
-            // v4.2: embedding BLOB を Vec<f32> に変換（次元数検証付き、引数から取得）
+            // embedding BLOB を Vec<f32> に変換（次元数検証付き、引数から取得）
             let embedding = match blob_format::blob_to_embedding(&embedding_blob, dimensions) {
                 Ok(e) => e,
                 Err(e) => {
-                    // v4.1: 次元不一致レコードは skip + warn（モデル変更時対応）
+                    // 次元不一致レコードは skip + warn（モデル変更時対応）
                     tracing::warn!("Skipping record {} with invalid embedding: {}", id, e);
                     continue;  // ← このレコードをスキップして次へ
                 }
@@ -817,11 +815,11 @@ impl MetadataStore {
         Ok(())
     }
     
-    /// v4.2: ID リストで embedding 再取得（rerank 用、次元数引数追加）
+    /// ID リストで embedding 再取得（rerank 用）
     pub async fn get_embeddings_by_ids(
         &self,
         record_ids: &[u64],
-        dimensions: usize,  // ← v4.2: 次元数を引数で受け取る
+        dimensions: usize,  // ← 次元数を引数で受け取る
     ) -> Result<HashMap<u64, Vec<f32>>> {
         if record_ids.is_empty() {
             return Ok(HashMap::new());
@@ -840,7 +838,7 @@ impl MetadataStore {
         
         let rows = qb.build_query().fetch_all(&self.pool).await?;
         
-        // v4.2: 引数から次元数を取得（default 不使用）
+        // 引数から次元数を取得
         let mut result = HashMap::new();
         
         for row in rows {
@@ -907,7 +905,7 @@ pub struct VectorStore {
     /// ベクトル次元数
     dimensions: usize,
     
-    /// v4.2: MetadataStore 参照を保持（再構築・rerank 用）
+    /// MetadataStore 参照を保持（再構築・rerank 用）
     metadata_store: Arc<MetadataStore>,
 }
 
@@ -919,7 +917,7 @@ impl VectorStore {
         ef_construction: u32,
         metadata_store: Arc<MetadataStore>,
     ) -> Result<Self> {
-        // HNSW インデックス作成（可変参照、v4.0 修正）
+        // HNSW インデックス作成
         let mut index = HnswBuilder::new()
             .dimensions(dimensions as u32)
             .max_elements(100_000)
@@ -928,10 +926,10 @@ impl VectorStore {
             .space(Space::Cosine)  // ← Cosine 距離を明示
             .build::<f32>()?;
         
-        // v4.2: SQLite から全レコード取得（次元数を引数で渡す）
+        // SQLite から全レコード取得
         let all_records = metadata_store.get_all_embeddings(dimensions).await?;
         
-        // HNSW に再登録（可変参照で OK、v4.0 修正済み）
+        // HNSW に再登録
         for record in &all_records {
             index.add_point(&record.embedding, record.id as i64)?;
         }
@@ -945,7 +943,7 @@ impl VectorStore {
             index: Mutex::new(index),
             metadata_cache: AsyncRwLock::new(metadata_cache),
             dimensions,
-            metadata_store,  // v4.2: Arc を保持
+            metadata_store,
         })
     }
     
@@ -967,7 +965,7 @@ impl VectorStore {
         Ok(())
     }
     
-    /// 類似度検索（真の rerank 付き、v4.2 Final）
+    /// 類似度検索（rerank 付き）
     pub async fn search_similar(
         &self,
         query: &[f32],
@@ -997,13 +995,13 @@ impl VectorStore {
             return Ok(vec![]);
         }
         
-        // ステップ 2: SQLite から元ベクトル再取得（rerank 用、v4.2 次元数引数追加）
+        // ステップ 2: SQLite から元ベクトル再取得（rerank 用）
         let embeddings = self.metadata_store.get_embeddings_by_ids(
             &candidates.iter().map(|c| c.record_id).collect::<Vec<_>>(),
-            self.dimensions,  // v4.2: 保持している次元数を使用
+            self.dimensions,
         ).await?;
         
-        // ステップ 3: 真の rerank（cosine 類似度再計算）
+        // ステップ 3: rerank（cosine 類似度再計算）
         for candidate in &mut candidates {
             if let Some(embedding) = embeddings.get(&candidate.record_id) {
                 let similarity = cosine_similarity(query, embedding);
@@ -1021,7 +1019,7 @@ impl VectorStore {
         // ステップ 5: 上位 k 件を SearchResult 形式で返す（順序・スコア保証）
         let top_k = candidates.iter().take(k).collect::<Vec<_>>();
         
-        // v4.2: MetadataStore から完全なレコード取得（QueryBuilder 版、v4.1）
+        // MetadataStore から完全なレコード取得
         self.metadata_store.get_search_results(&top_k.iter().map(|c| (*c).clone()).collect::<Vec<_>>()).await
     }
     
@@ -1059,7 +1057,7 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 
 ## 6. メモリ管理コア
 
-### 6.1 ShortTermMemory（v4.2）
+### 6.1 ShortTermMemory
 
 ```rust
 // src/memory/short_term.rs
@@ -1099,12 +1097,12 @@ impl ShortTermMemory {
         self.inner.front()
     }
     
-    /// v4.0: 最古の 1 件を削除して返す（重複昇格防止用）
+    /// 最古の 1 件を削除して返す（重複昇格防止用）
     pub fn remove_oldest(&mut self) -> Option<Conversation> {
         self.inner.pop_front()
     }
     
-    /// v4.1 Final: 失敗時復元用（先頭へ戻す、順序維持）
+    /// 失敗時復元用（先頭へ戻す、順序維持）
     pub fn restore_oldest(&mut self, conversation: Conversation) {
         self.inner.push_front(conversation);  // ← push_back ではなく push_front
     }
@@ -1199,7 +1197,7 @@ impl LongTermMemory {
 }
 ```
 
-### 6.4 MemoryOs Orchestrator（v4.2 Final Complete）
+### 6.4 MemoryOs Orchestrator
 
 ```rust
 // src/memory/orchestrator.rs
@@ -1224,7 +1222,7 @@ impl MemoryOs {
     pub async fn new(config: MemoryOsConfig) -> Result<Self> {
         let metadata_store = MetadataStore::new(&config.data_storage_path).await?;
         
-        // VectorStore 作成（SQLite から HNSW 再構築、v4.0 修正済み）
+        // VectorStore 作成（SQLite から HNSW 再構築）
         let vector_store = VectorStore::new(
             config.get_embedding_dimensions(),
             config.hnsw_m,
@@ -1270,7 +1268,7 @@ impl MemoryOs {
         
         let embedding = self.embedding_queue.generate(user_input).await?;
         
-        // v4.0: assistant_id 必須引数追加
+        // assistant_id 必須引数
         let record_id = self.metadata_store.save_new_memory_with_embedding(
             &self.config.user_id,
             &self.config.assistant_id,  // ← assistant_id 必須
@@ -1290,7 +1288,7 @@ impl MemoryOs {
         
         self.vector_store.insert(record_id, embedding, metadata).await?;
         
-        // v4.1: 耐障害性強化済み（失敗時は短期へ戻す）
+        // 耐障害性対応（失敗時は短期へ戻す）
         self.promote_short_to_mid().await?;
         self.promote_memory_if_needed().await?;
         
@@ -1300,14 +1298,14 @@ impl MemoryOs {
     pub async fn get_response(&self, query: &str) -> Result<String> {
         let query_embedding = self.embedding_queue.generate(query).await?;
         
-        // v4.0: 真の rerank 付き、SearchResult 形式で返却
+        // rerank 付き、SearchResult 形式で返却
         let relevant_memories = self.vector_store.search_similar(
             &query_embedding,
             self.config.retrieval_queue_capacity,
             self.config.similarity_threshold,
         ).await?;
         
-        // v4.0: Ok(format!(...)) に整合
+        // 結果を文字列として返す
         let context = self.build_context(&relevant_memories).await?;
         
         let response = self.llm_client.generate(&context, query).await?;
@@ -1331,7 +1329,7 @@ impl MemoryOs {
             long_term.get_profile_summary()
         };
         
-        // v4.0: Ok(format!(...)) で包む
+        // 結果を format! で包む
         Ok(format!(
             "=== User Profile ===\n{}\n\n=== Relevant Memories ===\n{}",
             profile,
@@ -1342,7 +1340,7 @@ impl MemoryOs {
         ))
     }
     
-    /// v4.1 Final: 失敗時は短期記憶へ戻す（restore_oldest で先頭復元）
+    /// 失敗時は短期記憶へ戻す（restore_oldest で先頭復元）
     async fn promote_short_to_mid(&self) -> Result<()> {
         // フェーズ 1: 短期記憶から最古を即座に削除
         let conversation_to_promote = {
@@ -1359,20 +1357,20 @@ impl MemoryOs {
             return Ok(());
         };
         
-        // フェーズ 2: 要約（失敗時は短期へ戻す、v4.1 restore_oldest）
+        // フェーズ 2: 要約（失敗時は短期へ戻す）
         let summary = match self.summarize_conversation(&conversation).await {
             Ok(s) => s,
             Err(e) => {
                 tracing::warn!("Conversation summarization failed, restoring to short-term: {}", e);
                 
                 let mut short_term = self.short_term.write().await;
-                short_term.restore_oldest(conversation);  // ← v4.1: push_front で先頭復元
+                short_term.restore_oldest(conversation);  // ← push_front で先頭復元
                 
                 return Ok(());
             }
         };
         
-        // v4.2: 中期記憶も HNSW 検索対象にするなら embedding を再生成
+        // 中期記憶も HNSW 検索対象にするなら embedding を再生成
         let mid_term_embedding = self.embedding_queue.generate(&summary).await?;
         
         // フェーズ 3: SQLite で新規 ID 発行・保存（失敗時は短期へ戻す）
@@ -1381,14 +1379,14 @@ impl MemoryOs {
             &self.config.assistant_id,
             &summary,
             MemoryLayer::MidTerm,
-            Some(&mid_term_embedding),  // v4.2: embedding を保存（HNSW 検索対象）
+            Some(&mid_term_embedding),  // embedding を保存（HNSW 検索対象）
         ).await {
             Ok(id) => id,
             Err(e) => {
                 tracing::warn!("SQLite save failed, restoring to short-term: {}", e);
                 
                 let mut short_term = self.short_term.write().await;
-                short_term.restore_oldest(conversation);  // ← v4.1: push_front で先頭復元
+                short_term.restore_oldest(conversation);  // ← push_front で先頭復元
                 
                 return Ok(());
             }
@@ -1411,7 +1409,7 @@ impl MemoryOs {
             let _ = self.metadata_store.delete_record(record_id).await;
             
             let mut short_term = self.short_term.write().await;
-            short_term.restore_oldest(conversation);  // ← v4.1: push_front で先頭復元
+            short_term.restore_oldest(conversation);  // ← push_front で先頭復元
             
             return Ok(());
         }
@@ -1436,7 +1434,7 @@ impl MemoryOs {
     }
     
     async fn promote_memory_if_needed(&self) -> Result<()> {
-        // v4.0: ID 集約→更新の 2 フェーズ（変更なし）
+        // ID 集約→更新の 2 フェーズ
         let ids_to_promote = {
             let mid_term = self.mid_term.read().await;
             mid_term.get_above_threshold(self.config.mid_term_heat_threshold)
@@ -1494,10 +1492,10 @@ impl Clone for MemoryOs {
 | VectorStore 内部 | `tokio::sync::Mutex` | HNSW 操作は排他必要 |
 | MetadataCache | `tokio::sync::RwLock` | 読み取り中心の共有データ |
 
-### 7.2 ロック設計原則（v4.2）
+### 7.2 ロック設計原則
 
 ```rust
-// ✅ v4.2: 外側ロックのみ使用（内側ロック削除）
+// ✅ 外側ロックのみ使用（内側ロック削除）
 pub struct MemoryOs {
     short_term: Arc<AsyncRwLock<ShortTermMemory>>,  // ← ロックはここだけ
 }
@@ -1507,16 +1505,12 @@ pub struct ShortTermMemory {
     capacity: usize,
 }
 
-// ❌ v2.0 の問題：二重ロック構造（削除済み）
-// pub struct ShortTermMemory {
-//     inner: Arc<AsyncRwLock<VecDeque<Conversation>>>,  // ← 不要！
-// }
 ```
 
-### 7.3 async/await文脈でのロック統一
+### 7.3 async/await 文脈でのロック統一
 
 ```rust
-// ✅ v4.2: tokio::sync に完全統一（std::sync 不使用）
+// ✅ tokio::sync に完全統一（std::sync 不使用）
 use tokio::sync::{Mutex, RwLock as AsyncRwLock};
 
 pub struct VectorStore {
@@ -1524,15 +1518,13 @@ pub struct VectorStore {
     metadata_cache: AsyncRwLock<HashMap<...>>,  // ← tokio::sync::RwLock
 }
 
-// ❌ v2.0 の問題：std::sync を async 文脈で使用（削除済み）
-// use std::sync::{Arc, Mutex};  // ブロッキングリスク！
 ```
 
 ---
 
 ## 8. エラー処理と耐障害性
 
-### 8.1 EmbeddingQueue（v4.2）
+### 8.1 EmbeddingQueue
 
 ```rust
 // src/embedding/queue.rs
@@ -1618,7 +1610,7 @@ impl EmbeddingQueue {
                 }
             }
             Err(e) => {
-                // v4.2: エラー時は Result::Err で返す（呼び出し側で区別可能）
+                // エラー時は Result::Err で返す（呼び出し側で区別可能）
                 for task in buffer.drain(..) {
                     let _ = task.response_tx.send(Err(MemoryOsError::EmbeddingError(
                         format!("Batch embedding failed: {}", e)
@@ -1635,7 +1627,7 @@ impl EmbeddingQueue {
 }
 ```
 
-### 8.2 プロモーション失敗時の耐障害性（v4.2 Final Complete）
+### 8.2 プロモーション失敗時の耐障害性
 
 | フェーズ | 失敗時処理 | 復元方法 |
 |---------|----------|---------|
@@ -1644,12 +1636,12 @@ impl EmbeddingQueue {
 | **HNSW 挿入** | `vector_store.insert()` エラー | SQLite クリーンアップ + `restore_oldest()` |
 
 ```rust
-// v4.2 Final: 失敗時は warn + 復元 + 次回再試行（エラー返却なし）
+// 失敗時は warn + 復元 + 次回再試行（エラー返却なし）
 if let Err(e) = self.summarize_conversation(&conversation).await {
     tracing::warn!("Summarization failed, restoring to short-term");
     
     let mut short_term = self.short_term.write().await;
-    short_term.restore_oldest(conversation);  // ← v4.1: push_front で先頭復元
+    short_term.restore_oldest(conversation);  // ← push_front で先頭復元
     
     return Ok(());  // ← エラーを伝播せず、次回再試行
 }
@@ -1657,14 +1649,14 @@ if let Err(e) = self.summarize_conversation(&conversation).await {
 
 ---
 
-## 9. 実装チェックリスト（v4.2 Final Complete）
+## 9. 実装チェックリスト
 
 ### フェーズ 1: コア機能（2 週間）
 - [ ] SQLite スキーマ作成（バージョン管理付き、JSON1 必須）
 - [ ] BLOB 形式定義（little-endian f32 配列、モデル依存次元数）
 - [ ] HNSW インデックス実装（CosineDistance 明示）
 - [ ] **起動時インデックス再構築フロー**（全フィールド取得 SQL）
-- [ ] **次元不一致レコードは skip + warn** ← v4.1 追加
+- [ ] **次元不一致レコードは skip + warn**
 
 ### フェーズ 2: ロック設計統一（1 週間）
 - [ ] 外側ロックのみ使用（内側削除）
@@ -1681,7 +1673,7 @@ if let Err(e) = self.summarize_conversation(&conversation).await {
 ### フェーズ 4: promote ロジック改善（3 日）
 - [ ] ID 集約→更新の 2 フェーズ化
 - [ ] **remove で確定してから要約（重複防止）**
-- [ ] **失敗時は restore_oldest() で短期へ戻す** ← v4.1 Final
+- [ ] **失敗時は restore_oldest() で短期へ戻す**
 - [ ] プロモーション再現性テスト
 
 ### フェーズ 5: EmbeddingQueue 強化（3 日）
@@ -1692,18 +1684,18 @@ if let Err(e) = self.summarize_conversation(&conversation).await {
 ### フェーズ 6: API 整合性修正（2 日）
 - [ ] **save_new_memory_with_embedding に assistant_id 必須追加**
 - [ ] build_context の Ok(format!(...)) 修正
-- [ ] **get_records_by_ids_ordered() を QueryBuilder に修正** ← v4.1 Final
-- [ ] **MemoryRecord の sqlx::FromRow 対応を最初に固定** ← v4.1 追加
-- [ ] **VectorStore::metadata_store 参照保持** ← v4.2 必須
-- [ ] **次元数引数を MetadataStore メソッドに追加** ← v4.2 必須
-- [ ] **MemoryRecord::created_at() の束縛修正** ← v4.2 必須
+- [ ] **get_records_by_ids_ordered() を QueryBuilder に修正**
+- [ ] **MemoryRecord の sqlx::FromRow 対応を最初に固定**
+- [ ] **VectorStore::metadata_store 参照保持**
+- [ ] **次元数引数を MetadataStore メソッドに追加**
+- [ ] **MemoryRecord::created_at() の束縛修正**
 - [ ] 型チェック全項目パス確認
 
 ### フェーズ 7: 統合テスト（1 週間）
 - [ ] LoCoMo ベンチマーク再現
 - [ ] パフォーマンス計測
 - [ ] **再起動時インデックス復元確認**（完全な metadata 復元検証）
-- [ ] **プロモーション失敗時の耐障害性テスト** ← v4.1 追加
+- [ ] **プロモーション失敗時の耐障害性テスト**
 
 ---
 
@@ -1718,7 +1710,7 @@ if let Err(e) = self.summarize_conversation(&conversation).await {
 | **HNSW 再構築時の次元不一致** | ✅ **skip + warn** | モデル変更時に古い BLOB が混ざる可能性あり |
 | **MemoryRecord の sqlx::FromRow** | ✅ **最初に固定** | query_as/build_query_as を使う前提 |
 
-### v4.2 Final Complete 修正点
+### 修正点
 
 | # | 問題 | 修正内容 | 状態 |
 |---|------|---------|------|
@@ -1729,11 +1721,11 @@ if let Err(e) = self.summarize_conversation(&conversation).await {
 ### 推奨設定
 
 ```rust
-// 中期記憶の embedding 生成（v4.2 Final Complete）
+// 中期記憶の embedding 生成
 async fn promote_short_to_mid(&self) -> Result<()> {
     // ... 要約完了後
     
-    // v4.2: 中期記憶も HNSW 検索対象にするなら embedding を再生成
+    // 中期記憶も HNSW 検索対象にするなら embedding を再生成
     let mid_term_embedding = self.embedding_queue.generate(&summary).await?;
     
     let record_id = self.metadata_store.save_new_memory_with_embedding(
@@ -1753,7 +1745,7 @@ async fn promote_short_to_mid(&self) -> Result<()> {
 
 ## 📊 パフォーマンス見積もり（現実的）
 
-| メトリクス | Python 版 | Rust 版（v4.2） | 改善率 | 備考 |
+| メトリクス | Python 版 | Rust 版 | 改善率 | 備考 |
 |----------|---------|--------------|--------|------|
 | **ベクトル検索** (10k) | ~50ms | **~5-8ms** | 6-10 倍 | HNSW 最適化効果 |
 | **メモリ使用量** | ~2GB | **~400-600MB** | 3-5 倍削減 | GC なし、効率的構造体 |
@@ -1771,18 +1763,18 @@ async fn promote_short_to_mid(&self) -> Result<()> {
 
 ---
 
-## ✅ v4.2 Final Complete の結論
+## ✅ 結論
 
-この v4.2 Final Complete 仕様書は、以下の最終修正を反映することで**実装開始版として完全に確定できる**。
+この仕様書は、以下の修正を反映することで**実装開始版として完全に確定できる**。
 
-### 最終確定修正（v4.1）
+### 最終確定修正
 
 | # | 修正内容 | 状態 |
 |---|---------|------|
 | 1 | `get_records_by_ids_ordered()` を sqlx::QueryBuilder + build_query_as() で実装 | ✅ 完了 |
 | 2 | `promote_short_to_mid()` の失敗時復元は `short_term.add()` ではなく `restore_oldest()` を使う | ✅ 完了 |
 
-### v4.2 Final Complete 追加修正
+### 追加修正
 
 | # | 問題 | 修正内容 | 状態 |
 |---|------|---------|------|
@@ -1797,15 +1789,3 @@ async fn promote_short_to_mid(&self) -> Result<()> {
 | 中期記憶を HNSW 検索対象に含めるか | **含める（A）** |
 | 含める場合は summary から embedding を再生成して保存すること | ✅ 必須 |
 | HNSW 再構築時の次元不一致レコードは skip + warn とすること | ✅ 必須 |
-
-### 最終判定
-
-```
-✅ 重大問題：0 件
-✅ 重要問題：0 件  
-✅ 軽微問題：0 件（将来拡張としてコメント化）
-
-→ 実装開始可能！
-```
-
-**上記を満たせば、重大・重要な設計破綻はない。** 🚀
